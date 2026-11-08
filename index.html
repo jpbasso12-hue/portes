@@ -91,7 +91,7 @@ input,select,button{padding:11px 12px}
 <details><summary>Import en bloc / export</summary>
 <p class="hint">Une ligne par site : adresse avec code postal ; vitrées ; portails ; sect. rigides ; sect. souples ; barrières ; volets ; op. battants ; niveleurs. Le collage depuis un tableur fonctionne aussi.</p>
 <textarea id="bulk" placeholder="12 rue Victor Hugo 65000 Tarbes;2;1;0;0;1;0;0;0"></textarea>
-<div style="display:flex;gap:8px;margin-top:6px"><button id="imp" type="button" class="go">Importer</button><button id="exp" type="button">Exporter CSV</button></div><p class="hint" style="margin-top:10px">Vos données restent sur ce téléphone ou cet ordinateur. Faites une sauvegarde de temps en temps.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button id="sav" type="button">Sauvegarder (fichier)</button><label class="btn" style="cursor:pointer">Restaurer une sauvegarde<input id="res" type="file" accept="application/json,.json" hidden></label></div></details>
+<div style="display:flex;gap:8px;margin-top:6px"><button id="imp" type="button" class="go">Importer</button><button id="exp" type="button">Exporter CSV</button><button id="geo" type="button">Localiser les sites approximatifs</button></div><p class="hint" style="margin-top:10px">Vos données restent sur ce téléphone ou cet ordinateur. Faites une sauvegarde de temps en temps.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button id="sav" type="button">Sauvegarder (fichier)</button><label class="btn" style="cursor:pointer">Restaurer une sauvegarde<input id="res" type="file" accept="application/json,.json" hidden></label></div></details>
 </div>
 
 <div class="card"><div id="zh" class="zh" hidden><button id="back" type="button">← Tous les départements</button><strong id="zt"></strong></div><svg id="map" viewBox="2 -4 446 326" role="img" aria-label="Carte des départements"></svg>
@@ -134,7 +134,7 @@ function render(){
  const d=$("detail");
  if(!sel){d.hidden=true}else{d.hidden=false;const l=sites.filter(s=>s.dep===sel);
   d.innerHTML=`<strong>${esc(geo[sel].name)} (${sel}) : ${tot(sel)} accès</strong><div class="hint">${esc(desc({q:agg(l)}))}</div> <span class="hint">· ${l.length} site(s)</span>`+
-  (l.map((s,i)=>`<div class="row" style="flex-wrap:wrap" data-r="${s.id}"><div class="a"><b>${i+1}.</b> ${esc(s.addr)}<br><span class="hint">${s.n} accès · ${esc(desc(s))}</span></div><button class="btn p" data-cp="${s.id}">Copier</button><a class="btn" href="${wz(s)}" rel="noopener">Waze</a><button data-ed="${s.id}">Modifier</button><button data-pl="${s.id}">${placing===s.id?"Touchez la carte":"Replacer"}</button><button data-del="${s.id}" aria-label="Supprimer">✕</button></div>`).join("")||`<div class="hint">Aucun site dans ce département.</div>`)}
+  (l.map((s,i)=>`<div class="row" style="flex-wrap:wrap" data-r="${s.id}"><div class="a"><b>${i+1}.</b> ${esc(s.addr)}<br><span class="hint">${s.n} accès · ${esc(desc(s))}${s.pos==="approx"?" · position approximative":""}</span></div><button class="btn p" data-cp="${s.id}">Copier</button><a class="btn" href="${wz(s)}" rel="noopener">Waze</a><button data-ed="${s.id}">Modifier</button><button data-pl="${s.id}">${placing===s.id?"Touchez la carte":"Replacer"}</button><button data-del="${s.id}" aria-label="Supprimer">✕</button></div>`).join("")||`<div class="hint">Aucun site dans ce département.</div>`)}
  const cf=$("conf"),ps=sites.find(x=>x.id===pend),p2=sites.find(x=>x.id===pend2),inf=sites.find(x=>x.id===info);
  if(p2){cf.hidden=false;cf.innerHTML=`<div style="border:2px solid #c62828;border-radius:8px;padding:8px"><strong style="color:#c62828">Dernière confirmation</strong><div style="margin:6px 0">Supprimer définitivement ce site ?<br><b>${esc(p2.addr)}</b><br><span class="hint">${p2.n} accès · action irréversible</span></div><div style="display:flex;gap:8px"><button class="go" data-no="1" style="background:var(--sel);border-color:var(--sel)">Non, conserver</button><button class="dng" data-ok="${p2.id}" style="flex:1">Oui, supprimer</button></div></div>`}else{
  const es=sites.find(x=>x.id===edt);
@@ -143,6 +143,19 @@ function render(){
  }
  $("zh").hidden=!sel;if(sel)$("zt").textContent=geo[sel].name+" ("+sel+") · "+tot(sel)+" accès";
  $("hint").textContent=placing?"Touchez la carte à l’endroit exact du site.":sel?"Touchez un point numéroté pour voir le site.":"Touchez un département pour l’afficher seul et voir ses sites."}
+
+const GEOQ=[];let geoBusy=false;
+function geoEnqueue(id){if(!GEOQ.includes(id))GEOQ.push(id);geoRun()}
+async function geoOne(id){const s=sites.find(x=>x.id===id);if(!s)return;
+ try{const r=await fetch("https://api-adresse.data.gouv.fr/search/?limit=1&q="+encodeURIComponent(s.addr));const j=await r.json();const f=j.features&&j.features[0];
+  const cur=sites.find(x=>x.id===id)||s;
+  if(f&&f.properties.score>=0.6&&String(f.properties.postcode||"").slice(0,2)===s.dep){const[lo,la]=f.geometry.coordinates;save({...cur,lo,la,pos:"exacte"})}
+  else save({...cur,pos:"approx"})}
+ catch(e){const cur=sites.find(x=>x.id===id);if(cur&&cur.pos!=="exacte")save({...cur,pos:"approx"})}}
+async function geoRun(){if(geoBusy)return;geoBusy=true;
+ while(GEOQ.length){const id=GEOQ.shift();await geoOne(id);await new Promise(r=>setTimeout(r,120))}
+ geoBusy=false}
+const geoNeeds=s=>!s.gps&&s.pos!=="exacte"&&s.pos!=="manuel";
 const today=()=>new Date().toISOString().slice(0,10);
 const wa=a=>{const t=a.replace(/\b\d{5}\b/,"").replace(/^\s*(\d+\w?)\s*,\s*/,"$1 ").replace(/\s+,/g,",").replace(/\s{2,}/g," ").trim();return t.length>6&&/\b\d{5}\s+[^\s\d]/.test(a)?t:a};
 function copyTxt(t){let ok=false;try{const a=document.createElement("textarea");a.value=t;a.setAttribute("readonly","");a.style.cssText="position:fixed;top:0;left:0;opacity:0";document.body.appendChild(a);a.select();a.setSelectionRange(0,t.length);ok=document.execCommand("copy");a.remove()}catch(e){}
@@ -175,7 +188,7 @@ function addSite(addr,q){
  if(!geo[dep])return"hors zone ("+cp.slice(0,2)+")";
  const a=norm(addr),c=cities.filter(x=>a.includes(x.n)).sort((x,y)=>y.n.length-x.n.length)[0],k=sites.filter(s=>s.dep===dep).length;
  const j=k*2.4,[lo,la]=c?[c.lo+(Math.random()-.5)*.04,c.la+(Math.random()-.5)*.03]:[geo[dep].cen[0]+Math.cos(j)*.12,geo[dep].cen[1]+Math.sin(j)*.1];
- save({id:"s"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),addr,n,q,dep,lo,la});lastDep=dep;return c?"":"centre"}
+ const id="s"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);save({id,addr,n,q,dep,lo,la,pos:"approx"});geoEnqueue(id);lastDep=dep;return c?"":"centre"}
 $("f").addEventListener("submit",e=>{e.preventDefault();const q={};document.querySelectorAll("#qs input").forEach(i=>q[i.dataset.q]=i.value);const r=addSite($("addr").value,q),m=$("msg");
  m.textContent=r==="centre"?"Ajouté ("+geo[lastDep].name+") au centre du département : utilisez « Replacer » pour le positionner.":r?"Non ajouté : "+r+".":"Ajouté ("+geo[lastDep].name+" "+lastDep+").";
  if(!r||r==="centre"){$("addr").value="";document.querySelectorAll("#qs input").forEach(i=>i.value="");$("qt").textContent="";$("addr").focus()}});
@@ -193,7 +206,7 @@ document.addEventListener("click",e=>{
  if(t.dataset.pl){placing=placing===t.dataset.pl?null:t.dataset.pl;render();return}
  if(t.closest("#map")){
   if(placing){const r=$("map").getBoundingClientRect(),[lo,la]=inv(vb[0]+(e.clientX-r.left)/r.width*vb[2],vb[1]+(e.clientY-r.top)/r.height*vb[3]);
-   const s=sites.find(x=>x.id===placing);placing=null;if(s)save({...s,lo,la});else render();return}
+   const s=sites.find(x=>x.id===placing);placing=null;if(s)save({...s,lo,la,pos:"manuel"});else render();return}
   if(t.dataset.p){info=t.dataset.p;pend=null;pend2=null;edt=null;render();$("conf").scrollIntoView({block:"nearest"});return}
   if(t.dataset.c){if(sel){info=null;render()}else pick(t.dataset.c)}return}
  const rw=t.closest("[data-r]");if(rw&&!t.closest("button,input,a")){info=rw.dataset.r;pend=null;pend2=null;edt=null;render();$("conf").scrollIntoView({block:"nearest"});return}
@@ -213,9 +226,10 @@ $("res").addEventListener("change",async e=>{const f=e.target.files[0];if(!f)ret
  if(!confirm("Remplacer les sites actuels par la sauvegarde ("+L.length+" site(s)) ?")){e.target.value="";return}
  sites=L.filter(s=>s&&s.id&&s.dep&&geo[s.dep]);lsSet();render();$("msg").textContent=sites.length+" site(s) restauré(s).";}catch(err){$("msg").textContent="Fichier de sauvegarde non reconnu."}e.target.value=""});
 $("back").addEventListener("click",()=>pick(sel));
+$("geo").addEventListener("click",()=>{const L=sites.filter(s=>geoNeeds(s));L.forEach(s=>{if(!GEOQ.includes(s.id))GEOQ.push(s.id)});$("msg").textContent=L.length?L.length+" site(s) en cours de localisation précise (connexion internet nécessaire).":"Tous les sites sont déjà localisés précisément.";geoRun()});
 $("qs").innerHTML=TY.map(t=>`<label>${t[1]}<input type="number" min="0" inputmode="numeric" data-q="${t[0]}" placeholder="0"></label>`).join("");
 $("qs").addEventListener("input",()=>{const q={};document.querySelectorAll("#qs input").forEach(i=>q[i.dataset.q]=i.value);const n=sq(cq(q));$("qt").textContent=n?"Total : "+n+" accès":""});
-sites=lsGet();render();
+sites=lsGet();render();sites.filter(s=>!s.gps&&!s.pos).forEach(s=>geoEnqueue(s.id));
 if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 </body>
